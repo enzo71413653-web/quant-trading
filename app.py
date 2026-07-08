@@ -1,6 +1,6 @@
 """我的量化学习台 —— Streamlit 交互版
 运行：先激活环境，再 `streamlit run app.py`，浏览器会自动打开 localhost:8501。
-左边选标的 / 拖滑块调均线，右边图表和指标实时变化。
+左边选标的 / 输代码 / 拖滑块，右边图表和指标实时变化。
 """
 import time
 from pathlib import Path
@@ -22,21 +22,46 @@ DATA.mkdir(exist_ok=True)
 # ---------------- 侧边栏：参数 ----------------
 PRESETS = {
     "沪深300ETF (510300)": ("510300", "etf"),
+    "上证50ETF (510050)": ("510050", "etf"),
     "中证500ETF (510500)": ("510500", "etf"),
+    "中证1000ETF (512100)": ("512100", "etf"),
     "创业板ETF (159915)": ("159915", "etf"),
+    "科创50ETF (588000)": ("588000", "etf"),
+    "红利ETF (510880)": ("510880", "etf"),
     "纳指ETF (513100)": ("513100", "etf"),
+    "标普500ETF (513500)": ("513500", "etf"),
+    "中概互联ETF (513050)": ("513050", "etf"),
+    "黄金ETF (518880)": ("518880", "etf"),
+    "恒生ETF (159920)": ("159920", "etf"),
     "贵州茅台 (600519)": ("600519", "stock"),
     "宁德时代 (300750)": ("300750", "stock"),
+    "比亚迪 (002594)": ("002594", "stock"),
+    "招商银行 (600036)": ("600036", "stock"),
+    "五粮液 (000858)": ("000858", "stock"),
+    "中国平安 (601318)": ("601318", "stock"),
 }
 st.sidebar.header("① 选标的")
 choice = st.sidebar.selectbox("常用标的", list(PRESETS))
-symbol, kind = PRESETS[choice]
+custom = st.sidebar.text_input("或直接输代码（会覆盖上面）", "").strip()
+custom_kind = st.sidebar.radio("代码类型", ["ETF/基金", "股票"], horizontal=True)
+if custom:
+    symbol = custom
+    kind = "etf" if custom_kind.startswith("ETF") else "stock"
+    label = f"{symbol}（自定义）"
+else:
+    symbol, kind = PRESETS[choice]
+    label = choice
+
 start = st.sidebar.text_input("起始日期 (YYYYMMDD)", "20190101")
 end = st.sidebar.text_input("结束日期 (YYYYMMDD)", "20261231")
 
 st.sidebar.header("② 调策略（双均线）")
 n1 = st.sidebar.slider("短均线 n1", 5, 60, 20)
 n2 = st.sidebar.slider("长均线 n2", 20, 200, 60)
+
+if st.sidebar.button("🔄 刷新最新数据"):
+    st.cache_data.clear()
+    st.rerun()
 
 
 @st.cache_data(ttl=3600, show_spinner="拉取行情中…")
@@ -56,12 +81,12 @@ def load(symbol, kind, start, end):
                                     "最高": "High", "最低": "Low", "成交量": "Volume"})
             df["Date"] = pd.to_datetime(df["Date"])
             df = df.set_index("Date").sort_index()[["Open", "High", "Low", "Close", "Volume"]]
-            df.to_csv(csv, encoding="utf-8-sig")   # 存本地，下次可兜底
+            df.to_csv(csv, encoding="utf-8-sig")
             return df, "online"
         except Exception as e:
             last_err = e
             time.sleep(1.5)
-    if csv.exists():   # 联网失败 → 用之前存下的本地数据
+    if csv.exists():
         return pd.read_csv(csv, index_col="Date", parse_dates=True), "cache"
     raise last_err
 
@@ -70,23 +95,39 @@ try:
     df, source = load(symbol, kind, start, end)
 except Exception as e:
     st.error(f"数据拉取失败（重试后仍失败），且本地没有该标的缓存：\n\n{e}\n\n"
-             "多半是数据源（东方财富）临时抽风。按键盘 R 或右上角菜单 Rerun 再试一次；"
+             "多半是数据源（东方财富）临时抽风。点侧栏『🔄 刷新最新数据』重试；"
              "或先选『沪深300ETF』——它已有本地缓存，一定能打开。")
     st.stop()
 if df.empty:
-    st.warning("这段时间没有数据，换个日期区间。")
+    st.warning("这段时间没有数据，换个日期区间或代码。")
     st.stop()
 if source == "cache":
-    st.caption("⚠️ 联网失败，当前用的是**本地缓存**数据（可能不是最新）。")
+    st.caption("⚠️ 联网失败，当前用的是**本地缓存**数据（可能不是最新，点侧栏🔄可重试联网）。")
+
+returns = df["Close"].pct_change().dropna()
 
 # ---------------- Part 1：体检 ----------------
-st.subheader(f"🩺 体检 · {choice}")
-returns = df["Close"].pct_change().dropna()
+st.subheader(f"🩺 体检 · {label}")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("累计收益", f"{(1 + returns).prod() - 1:.1%}")
 c2.metric("年化波动", f"{qs.stats.volatility(returns):.1%}")
 c3.metric("最大回撤", f"{qs.stats.max_drawdown(returns):.1%}")
 c4.metric("夏普比率", f"{qs.stats.sharpe(returns):.2f}")
+try:
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("年化收益", f"{qs.stats.cagr(returns):.1%}")
+    d2.metric("索提诺", f"{qs.stats.sortino(returns):.2f}")
+    d3.metric("卡玛比率", f"{qs.stats.calmar(returns):.2f}")
+    d4.metric("日胜率", f"{qs.stats.win_rate(returns):.1%}")
+except Exception as e:
+    st.caption(f"部分进阶指标暂不可用：{e}")
+
+with st.expander("📊 完整体检指标表（quantstats 全套几十个指标）"):
+    try:
+        st.dataframe(qs.reports.metrics(returns, mode="full", display=False),
+                     use_container_width=True)
+    except Exception as e:
+        st.caption(f"完整指标表暂不可用：{e}")
 
 left, right = st.columns(2)
 left.markdown("**价格走势（前复权）**")
@@ -128,6 +169,10 @@ b1.metric("策略收益", f"{stats['Return [%]']:.1f}%")
 b2.metric("买入持有", f"{stats['Buy & Hold Return [%]']:.1f}%")
 b3.metric("策略夏普", f"{stats['Sharpe Ratio']:.2f}")
 b4.metric("胜率", f"{stats['Win Rate [%]']:.0f}%")
+
+with st.expander("🔬 完整回测指标（交易次数 / 手续费 / 最大回撤 …）"):
+    s = stats.drop(["_strategy", "_equity_curve", "_trades"], errors="ignore")
+    st.dataframe(s.astype(str), use_container_width=True)
 
 st.markdown("**价格 + 两条均线（看它们在哪交叉）**")
 st.line_chart(pd.DataFrame({
