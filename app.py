@@ -2,6 +2,9 @@
 运行：先激活环境，再 `streamlit run app.py`，浏览器会自动打开 localhost:8501。
 左边选标的 / 拖滑块调均线，右边图表和指标实时变化。
 """
+import time
+from pathlib import Path
+
 import pandas as pd
 import akshare as ak
 import quantstats as qs
@@ -12,6 +15,9 @@ from backtesting.lib import crossover
 st.set_page_config(page_title="我的量化学习台", page_icon="📈", layout="wide")
 st.title("📈 我的量化学习台")
 st.caption("纯学习 / 纸面回测，不涉及真实交易。回测赚钱 ≠ 实盘赚钱。")
+
+DATA = Path(__file__).resolve().parent / "data"
+DATA.mkdir(exist_ok=True)
 
 # ---------------- 侧边栏：参数 ----------------
 PRESETS = {
@@ -35,27 +41,43 @@ n2 = st.sidebar.slider("长均线 n2", 20, 200, 60)
 
 @st.cache_data(ttl=3600, show_spinner="拉取行情中…")
 def load(symbol, kind, start, end):
-    if kind == "etf":
-        df = ak.fund_etf_hist_em(symbol=symbol, period="daily",
-                                 start_date=start, end_date=end, adjust="qfq")
-    else:
-        df = ak.stock_zh_a_hist(symbol=symbol, period="daily",
-                                start_date=start, end_date=end, adjust="qfq")
-    df = df.rename(columns={"日期": "Date", "开盘": "Open", "收盘": "Close",
-                            "最高": "High", "最低": "Low", "成交量": "Volume"})
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.set_index("Date").sort_index()
-    return df[["Open", "High", "Low", "Close", "Volume"]]
+    """先联网拉取（重试2次），失败则回退本地缓存 CSV。"""
+    csv = DATA / f"{symbol}.csv"
+    last_err = None
+    for _ in range(2):
+        try:
+            if kind == "etf":
+                df = ak.fund_etf_hist_em(symbol=symbol, period="daily",
+                                         start_date=start, end_date=end, adjust="qfq")
+            else:
+                df = ak.stock_zh_a_hist(symbol=symbol, period="daily",
+                                        start_date=start, end_date=end, adjust="qfq")
+            df = df.rename(columns={"日期": "Date", "开盘": "Open", "收盘": "Close",
+                                    "最高": "High", "最低": "Low", "成交量": "Volume"})
+            df["Date"] = pd.to_datetime(df["Date"])
+            df = df.set_index("Date").sort_index()[["Open", "High", "Low", "Close", "Volume"]]
+            df.to_csv(csv, encoding="utf-8-sig")   # 存本地，下次可兜底
+            return df, "online"
+        except Exception as e:
+            last_err = e
+            time.sleep(1.5)
+    if csv.exists():   # 联网失败 → 用之前存下的本地数据
+        return pd.read_csv(csv, index_col="Date", parse_dates=True), "cache"
+    raise last_err
 
 
 try:
-    df = load(symbol, kind, start, end)
+    df, source = load(symbol, kind, start, end)
 except Exception as e:
-    st.error(f"数据拉取失败：{e}")
+    st.error(f"数据拉取失败（重试后仍失败），且本地没有该标的缓存：\n\n{e}\n\n"
+             "多半是数据源（东方财富）临时抽风。按键盘 R 或右上角菜单 Rerun 再试一次；"
+             "或先选『沪深300ETF』——它已有本地缓存，一定能打开。")
     st.stop()
 if df.empty:
     st.warning("这段时间没有数据，换个日期区间。")
     st.stop()
+if source == "cache":
+    st.caption("⚠️ 联网失败，当前用的是**本地缓存**数据（可能不是最新）。")
 
 # ---------------- Part 1：体检 ----------------
 st.subheader(f"🩺 体检 · {choice}")
