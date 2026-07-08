@@ -1,0 +1,8 @@
+# 初学者量化学习栈 —— 只装够用的，不碰需要编译的重货（如 TA-Lib）
+akshare>=1.14        # A股/ETF/基金 数据（免费，中文文档）
+pandas>=2.2
+numpy>=1.26
+backtesting>=0.3.3   # 极简回测框架，学"想法→验证"
+quantstats>=0.0.64   # 组合绩效体检：收益/回撤/夏普
+matplotlib>=3.8      # 画图（上面两个依赖）
+jupyterlab>=4.0      # 可选：写 notebook 边学边试
