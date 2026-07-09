@@ -45,9 +45,15 @@ UNIVERSE = [
     # 指数
     {"name": "标普500 SPY", "symbol": "SPY", "market": "us", "sector": "指数"},
     {"name": "纳指100 QQQ", "symbol": "QQQ", "market": "us", "sector": "指数"},
+    # 贵金属
+    {"name": "黄金期货 GC=F", "symbol": "GC=F", "market": "us", "sector": "贵金属"},
+    {"name": "黄金ETF GLD", "symbol": "GLD", "market": "us", "sector": "贵金属"},
+    {"name": "白银期货 SI=F", "symbol": "SI=F", "market": "us", "sector": "贵金属"},
+    {"name": "金矿股ETF GDX", "symbol": "GDX", "market": "us", "sector": "贵金属"},
+    {"name": "黄金ETF(A股) 518880", "symbol": "518880", "market": "cn_etf", "sector": "贵金属"},
 ]
 
-SECTORS = ["半导体", "存储", "MLCC", "CPO", "科技大厂", "指数"]
+SECTORS = ["半导体", "存储", "MLCC", "CPO", "科技大厂", "指数", "贵金属"]
 
 
 def by_sector(sector):
