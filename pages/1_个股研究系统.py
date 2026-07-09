@@ -1,4 +1,4 @@
-"""个股研究系统 —— 指标概览 / 对比研究 / 周期行研 / 新闻热点。
+"""个股研究系统 —— 指标概览 / 对比研究 / 周期行研 / 新闻热点 / 定投模拟。
 中/美/韩/日 皆可；联网实时拉取，失败回退本地缓存。富可视化用 Plotly（可缩放/悬浮/开关副图）。
 """
 import sys
@@ -16,8 +16,10 @@ from plotly.subplots import make_subplots
 
 from data import get_price, get_news
 from universe import SECTORS, by_sector
+from theme import inject_css
 
 st.set_page_config(page_title="个股研究系统", page_icon="🔬", layout="wide")
+inject_css()
 st.title("🔬 个股研究系统")
 
 # ---------- 侧栏 ----------
@@ -75,13 +77,19 @@ def _macd(s, f=12, sl=26, sig=9):
     return dif, dea, (dif - dea) * 2
 
 
+def _rolling_sharpe(r, window=126):
+    vol = r.rolling(window).std()
+    return (r.rolling(window).mean() / vol.replace(0, 1e-9)) * (252 ** 0.5)
+
+
 st.subheader(f"{u['name']} · {symbol} · {market}")
 if source == "cache":
     st.caption("⚠️ 联网失败，当前用本地缓存（非实时）。点侧栏 🔄 重试。")
 else:
     st.caption(f"🟢 联网实时 · 最新 {close.index[-1].date()} 收盘 {close.iloc[-1]:.2f}")
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 指标概览", "⚖️ 对比研究", "🔄 周期行研", "📰 新闻热点"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📊 指标概览", "⚖️ 对比研究", "🔄 周期行研", "📰 新闻热点", "💰 定投模拟"])
 
 # ---------- Tab1 指标概览 ----------
 with tab1:
@@ -93,8 +101,9 @@ with tab1:
     r1[1].metric("累计收益", f"{cum:+.1%}", f"{cum:+.1%}", delta_color="inverse",
                  help="区间内买入持有的总回报")
     mdd = qs.stats.max_drawdown(returns)
-    r1[2].metric("最大回撤", f"{mdd:.1%}", f"{mdd:.1%}", delta_color="inverse",
-                 help="从历史最高点回落的最大幅度；越接近 0 越抗跌。你能扛住这个跌幅吗？")
+    r1[2].metric("最大回撤", f"{mdd:.1%}",
+                 help="从历史最高点回落的最大幅度；越接近 0 越抗跌。你能扛住这个跌幅吗？"
+                      "（该数值恒为负，不做红绿上色——颜色对'恒定符号'的指标没有区分度）")
     r1[3].metric("夏普比率", f"{qs.stats.sharpe(returns):.2f}",
                  help="每单位总波动换来的超额收益；>1 较好，0.5 左右一般，<0 别碰")
     try:
@@ -122,7 +131,6 @@ with tab1:
     except Exception:
         pass
 
-    # 动态 Plotly：主图 + 可开关的副图
     rows = [("💹 K线 + 均线", 0.46)]
     if show_vol:
         rows.append(("成交量", 0.16))
@@ -141,6 +149,11 @@ with tab1:
                              line=dict(width=1, color="#f5c518")), row=1, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=close.rolling(n_long).mean(), name=f"MA{n_long}",
                              line=dict(width=1, color="#42a5f5")), row=1, col=1)
+    ath = close.cummax().iloc[-1]
+    dist_ath = close.iloc[-1] / ath - 1
+    fig.add_hline(y=ath, row=1, col=1, line=dict(dash="dash", color="#ffca28", width=1),
+                 annotation_text=f"区间新高 {ath:.2f}（现价距此 {dist_ath:.1%}）",
+                 annotation_position="top left", annotation_font_size=10)
     r = 1
     if show_vol:
         r += 1
@@ -158,9 +171,12 @@ with tab1:
                              marker_color=["#ef5350" if v >= 0 else "#26a69a" for v in hist]), row=r, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=dif, name="DIF", line=dict(color="#f5c518", width=1)), row=r, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=dea, name="DEA", line=dict(color="#42a5f5", width=1)), row=r, col=1)
-    fig.update_layout(height=780, template="plotly_dark", hovermode="x unified",
-                      xaxis_rangeslider_visible=False, margin=dict(t=40, b=60, l=10, r=10),
+    fig.update_layout(height=820, template="plotly_dark", hovermode="x unified",
+                      margin=dict(t=40, b=60, l=10, r=10),
                       legend=dict(orientation="h", yanchor="top", y=-0.05, xanchor="center", x=0.5))
+    fig.update_xaxes(rangeslider_visible=True, rangeslider_thickness=0.04, row=1, col=1)
+    for rr in range(2, len(rows) + 1):
+        fig.update_xaxes(rangeslider_visible=False, row=rr, col=1)
     st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
 
     with st.expander("📄 查看 / 下载历史数据（OHLCV）"):
@@ -196,17 +212,17 @@ with tab2:
                              title="归一净值（起点=100，看谁跑得快）", margin=dict(t=40, b=40),
                              legend=dict(orientation="h", y=-0.15))
             st.plotly_chart(f2, use_container_width=True, config={"scrollZoom": True})
-        rows = []
+        rows2 = []
         for nm, s in closes.items():
             r = s.pct_change().dropna()
             try:
-                rows.append({"标的": nm, "累计": f"{(1 + r).prod() - 1:.0%}",
-                             "年化": f"{qs.stats.cagr(r):.0%}", "波动": f"{qs.stats.volatility(r):.0%}",
-                             "最大回撤": f"{qs.stats.max_drawdown(r):.0%}", "夏普": f"{qs.stats.sharpe(r):.2f}"})
+                rows2.append({"标的": nm, "累计": f"{(1 + r).prod() - 1:.0%}",
+                              "年化": f"{qs.stats.cagr(r):.0%}", "波动": f"{qs.stats.volatility(r):.0%}",
+                              "最大回撤": f"{qs.stats.max_drawdown(r):.0%}", "夏普": f"{qs.stats.sharpe(r):.2f}"})
             except Exception:
                 pass
-        if rows:
-            st.dataframe(pd.DataFrame(rows).set_index("标的"), use_container_width=True)
+        if rows2:
+            st.dataframe(pd.DataFrame(rows2).set_index("标的"), use_container_width=True)
     else:
         st.info("同行数据未拉到，点侧栏 🔄 重试。")
 
@@ -222,11 +238,30 @@ CYCLE = {
 with tab3:
     st.markdown("**长期价格（多年周期视角）**")
     st.line_chart(close)
+
     cc = st.columns(2)
     cc[0].markdown("**滚动 1 年收益**")
     cc[0].line_chart(close.pct_change(252).dropna())
-    cc[1].markdown("**历史回撤（水下图）**")
-    cc[1].area_chart(close / close.cummax() - 1)
+
+    dd = close / close.cummax() - 1
+    f3 = go.Figure()
+    f3.add_trace(go.Scatter(x=dd.index, y=dd, fill="tozeroy", mode="lines",
+                            line=dict(color="#ef5350", width=1), fillcolor="rgba(239,83,80,0.35)"))
+    f3.update_layout(height=280, template="plotly_dark", margin=dict(t=10, b=10, l=0, r=0),
+                     yaxis_tickformat=".0%")
+    with cc[1]:
+        st.markdown("**历史回撤 · 水下图（离前高多远，越红越惨）**")
+        st.plotly_chart(f3, use_container_width=True)
+
+    st.markdown(f"**滚动夏普比率（{126}日窗口，判断策略是在变好还是吃老本）**")
+    rs = _rolling_sharpe(returns, 126).dropna()
+    f4 = go.Figure()
+    f4.add_trace(go.Scatter(x=rs.index, y=rs, mode="lines", line=dict(color="#42a5f5")))
+    f4.add_hline(y=0, line=dict(color="#666", dash="dot"))
+    f4.update_layout(height=260, template="plotly_dark", margin=dict(t=10, b=10, l=0, r=0))
+    st.plotly_chart(f4, use_container_width=True)
+    st.caption("滚动夏普持续下滑 = 这段时间的收益/风险性价比在变差，可能是'早年赚的钱在撑门面'，别只看总夏普。")
+
     st.info(f"**「{sector}」周期驱动要点**\n\n{CYCLE.get(sector, '（待补充）')}")
 
 # ---------- Tab4 新闻热点 ----------
@@ -239,3 +274,47 @@ with tab4:
         for _, row in news.iterrows():
             with st.expander(f"🕑 {row['时间']} · {str(row['标题'])[:60]}"):
                 st.write(row["摘要"] or "（无摘要）")
+
+# ---------- Tab5 定投模拟 ----------
+with tab5:
+    st.caption("模拟「每月定投固定金额」vs「等额一次性买入」。纯教学演示，不构成投资建议。")
+    monthly = st.number_input("每月投入金额（该标的计价货币）", min_value=10, value=1000, step=100)
+    monthly_px = close.resample("MS").first().dropna()
+    if len(monthly_px) < 2:
+        st.info("区间太短（不足2个月），把侧栏日期范围拉长一点。")
+    else:
+        shares = monthly / monthly_px
+        cum_shares = shares.cumsum()
+        cum_invested = pd.Series(monthly, index=monthly_px.index).cumsum()
+        dca_value = (cum_shares.reindex(close.index, method="ffill") * close).dropna()
+        dca_invested = cum_invested.reindex(close.index, method="ffill").dropna()
+        first_day = dca_invested.index[0]
+        lump_shares = dca_invested.iloc[-1] / close.loc[first_day]
+        lump_value = lump_shares * close.loc[dca_invested.index]
+
+        f5 = go.Figure()
+        f5.add_trace(go.Scatter(x=dca_value.index, y=dca_value, name="定投市值"))
+        f5.add_trace(go.Scatter(x=dca_invested.index, y=dca_invested, name="累计投入本金",
+                                line=dict(dash="dot", color="#888")))
+        f5.add_trace(go.Scatter(x=lump_value.index, y=lump_value, name="等额一次性买入对比",
+                                line=dict(color="#f5c518")))
+        f5.update_layout(height=420, template="plotly_dark", hovermode="x unified",
+                         margin=dict(t=20, b=40), legend=dict(orientation="h", y=-0.15))
+        st.plotly_chart(f5, use_container_width=True)
+
+        total_invested = dca_invested.iloc[-1]
+        final_value = dca_value.iloc[-1]
+        avg_cost = total_invested / cum_shares.iloc[-1]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("累计投入", f"{total_invested:,.0f}")
+        c2.metric("定投当前市值", f"{final_value:,.0f}", f"{final_value / total_invested - 1:+.1%}",
+                  delta_color="inverse", help="定投总市值相对累计投入本金的盈亏")
+        c3.metric("平均持仓成本", f"{avg_cost:.2f}", help="定投摊薄后的平均买入价")
+        c4.metric("一次性买入对比市值", f"{lump_value.iloc[-1]:,.0f}",
+                  f"{lump_value.iloc[-1] / total_invested - 1:+.1%}", delta_color="inverse",
+                  help="把同样的总本金，在第一个月一次性全买，拿到今天的市值")
+        if lump_value.iloc[-1] > final_value:
+            st.info("📌 这段区间「一次性买入」跑赢了「定投」——历史上多数上涨行情里都是这样（早买早享受）。"
+                    "定投真正的价值是**平滑下跌期的成本、降低择时心理压力**，不是稳赢一次性买入。")
+        else:
+            st.success("📌 这段区间「定投」跑赢了「一次性买入」——常见于开局下跌、后段修复的走势（定投摊低了成本）。")

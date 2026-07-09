@@ -13,8 +13,10 @@ from backtesting import Backtest, Strategy
 from backtesting.lib import crossover
 
 from data import get_price
+from theme import inject_css
 
 st.set_page_config(page_title="我的量化学习台", page_icon="📈", layout="wide")
+inject_css()
 st.title("📈 我的量化学习台")
 st.caption("纯学习 / 纸面回测，不涉及真实交易。回测赚钱 ≠ 实盘赚钱。")
 

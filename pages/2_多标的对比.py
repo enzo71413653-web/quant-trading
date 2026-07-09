@@ -9,8 +9,10 @@ import quantstats as qs
 import streamlit as st
 
 from data import get_price
+from theme import inject_css
 
 st.set_page_config(page_title="多标的对比", page_icon="📊", layout="wide")
+inject_css()
 st.title("📊 多标的对比")
 st.caption("把几个标的放一起比：谁涨得多、谁跌得狠、谁的性价比（夏普）高。")
 
