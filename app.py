@@ -17,6 +17,7 @@ from data import get_price
 from theme import inject_css
 from indicators import sma, rsi, atr as atr_fn, chandelier_exit
 from universe import UNIVERSE
+import journal
 
 st.set_page_config(page_title="策略回测沙盒", page_icon="📈", layout="wide")
 inject_css()
@@ -93,6 +94,7 @@ except Exception as e:
 
 if st.button("🔍 扫描自选池信号（金叉/死叉/RSI超买超卖 + 市场宽度）"):
     st.session_state["scan_res"], st.session_state["breadth"] = scan_universe()
+    journal.log_signals(st.session_state["scan_res"].to_dict("records"))
 if "scan_res" in st.session_state:
     breadth = st.session_state.get("breadth")
     if breadth is not None:
