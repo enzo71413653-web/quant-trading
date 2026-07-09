@@ -13,7 +13,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from data import get_price
+from data import get_price, get_quote
 from theme import inject_css
 from indicators import sma
 import western_news
@@ -53,13 +53,18 @@ def _live_gold_ticker():
     close = g["Close"].dropna()
     ret = close.pct_change().dropna()
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("最新价", f"{close.iloc[-1]:.1f}", f"{ret.iloc[-1]:+.2%}", delta_color="inverse")
+    try:
+        last, chg = get_quote("GC=F")
+        c1.metric("最新价（近实时）", f"{last:.1f}", f"{chg:+.2%}", delta_color="inverse")
+        quote_ok = True
+    except Exception:
+        c1.metric("最新价（日线收盘）", f"{close.iloc[-1]:.1f}", f"{ret.iloc[-1]:+.2%}", delta_color="inverse")
+        quote_ok = False
     c2.metric("累计收益", f"{(1+ret).prod()-1:.1%}")
     c3.metric("最大回撤", f"{qs.stats.max_drawdown(ret):.1%}")
     c4.metric("夏普比率", f"{qs.stats.sharpe(ret):.2f}")
-    tag = "🟢 联网实时" if src2 == "live" else "⚠️ 本地缓存"
-    st.caption(f"{tag} · 每30秒自动检查一次 · 最后检查 {dt.datetime.now().strftime('%H:%M:%S')}"
-              "（数据源本身按分钟级更新，非逐笔tick）")
+    src_tag = "🟢 近实时报价(约15分钟延迟)" if quote_ok else "⚠️ 报价接口不可用，回退日线收盘价"
+    st.caption(f"{src_tag} · 每30秒自动检查一次 · 最后检查 {dt.datetime.now().strftime('%H:%M:%S')}")
 
 
 _live_gold_ticker()

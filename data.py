@@ -133,6 +133,21 @@ def get_price(symbol, market, start="20190101", end="20261231"):
     return _fetch(symbol, market, start, end)
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def get_quote(symbol):
+    """近实时报价（非日线收盘价），用于'最新价'这类要跳动的展示。仅支持yfinance覆盖的标的
+    （us/kr/jp）；免费数据通常有约15分钟延迟，但确实会随行情变化，不是"这根日K线走完前不变"。
+    """
+    import yfinance as yf
+    fi = yf.Ticker(symbol).fast_info
+    last = fi.get("lastPrice")
+    prev = fi.get("previousClose")
+    if last is None:
+        raise ValueError("该标的无近实时报价（可能不支持或非交易时段）")
+    chg = (last - prev) / prev if prev else 0.0
+    return float(last), float(chg)
+
+
 def _one_news(fn):
     df = fn()
     tcol = next((c for c in df.columns if "标题" in c or "title" in c.lower()), None)
