@@ -18,6 +18,7 @@ from data import get_price, get_news
 from universe import SECTORS, by_sector
 from theme import inject_css
 from indicators import sma, rsi as _rsi, macd as _macd
+import western_news
 
 st.set_page_config(page_title="个股研究系统", page_icon="🔬", layout="wide")
 inject_css()
@@ -270,14 +271,60 @@ with tab3:
 
 # ---------- Tab4 新闻热点 ----------
 with tab4:
-    st.caption("多源快讯（东财 + 同花顺 + 新浪）按公司/赛道关键词过滤，联网实时。")
-    news = get_news([u["name"].split()[0], sector], limit=40)
-    if news.empty:
-        st.info("暂无快讯，点侧栏 🔄 刷新。")
-    else:
-        for _, row in news.iterrows():
-            with st.expander(f"🕑 {row['时间']} · {str(row['标题'])[:60]}"):
-                st.write(row["摘要"] or "（无摘要）")
+    src_cn, src_yf, src_gn, src_sec = st.tabs(
+        ["🇨🇳 中文快讯", "🟣 Yahoo Finance", "🌐 Google News", "🏛️ SEC官方披露(仅美股)"])
+
+    with src_cn:
+        st.caption("东财 + 同花顺 + 新浪，按公司/赛道关键词过滤。")
+        news = get_news([u["name"].split()[0], sector], limit=40)
+        if news.empty:
+            st.info("暂无快讯，点侧栏 🔄 刷新。")
+        else:
+            for _, row in news.iterrows():
+                with st.expander(f"🕑 {row['时间']} · {str(row['标题'])[:60]}"):
+                    st.write(row["摘要"] or "（无摘要）")
+
+    with src_yf:
+        st.caption("Yahoo Finance 官方聚合（路透/MarketWatch/AP等）。")
+        try:
+            yn = western_news.yf_news(symbol, limit=10)
+            if yn.empty:
+                st.info("该标的暂无 Yahoo Finance 新闻。")
+            else:
+                for _, row in yn.iterrows():
+                    with st.expander(f"🕑 {row['时间']} · {row['标题'][:70]}"):
+                        st.caption(f"来源：{row['来源']}")
+                        st.write(row["摘要"] or "（无摘要）")
+        except Exception as e:
+            st.caption(f"暂不可用：{e}")
+
+    with src_gn:
+        st.caption("Google News 全网聚合搜索（覆盖面最广，含彭博/CNBC/WSJ等标题）。")
+        try:
+            gn = western_news.google_news(f"{u['name'].split()[0]} stock", limit=15)
+            if gn.empty:
+                st.info("未搜到相关新闻。")
+            else:
+                for _, row in gn.iterrows():
+                    st.markdown(f"🕑 {row['时间'][:16]} · [{row['标题']}]({row['链接']}) "
+                               f"· *{row['来源']}*")
+        except Exception as e:
+            st.caption(f"暂不可用：{e}")
+
+    with src_sec:
+        if market != "us":
+            st.info("SEC EDGAR 仅覆盖美国上市公司。")
+        else:
+            st.caption("美国证监会官方监管披露——比新闻更权威的一手信息（内部人交易、重大事件公告等）。")
+            try:
+                sec = western_news.sec_filings(symbol, limit=10)
+                if sec.empty:
+                    st.info("未查到该代码的 SEC 备案（请核对代码是否为美股上市主体）。")
+                else:
+                    for _, row in sec.iterrows():
+                        st.markdown(f"📄 {row['日期']} · **{row['类型']}** · [查看原文]({row['链接']})")
+            except Exception as e:
+                st.caption(f"暂不可用：{e}")
 
 # ---------- Tab5 定投模拟 ----------
 with tab5:
