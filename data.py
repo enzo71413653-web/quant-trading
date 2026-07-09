@@ -128,7 +128,7 @@ def _fetch(symbol, market, start, end):
     raise last_err
 
 
-@st.cache_data(ttl=300, show_spinner="联网拉取行情中…")
+@st.cache_data(ttl=60, show_spinner="联网拉取行情中…")
 def get_price(symbol, market, start="20190101", end="20261231"):
     return _fetch(symbol, market, start, end)
 

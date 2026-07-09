@@ -82,15 +82,21 @@ def scan_universe():
     return pd.DataFrame(rows), breadth
 
 
-try:
-    vix_now, spy_now, spy_ma50, risk_off = market_regime()
-    if risk_off:
-        st.error(f"🔴 高波动/弱势环境 · VIX={vix_now:.1f} · SPY={spy_now:.0f}（50日均线{spy_ma50:.0f}）"
-                 " —— 多头策略建议减仓或观望，仅供参考、非自动执行")
-    else:
-        st.success(f"🟢 环境正常 · VIX={vix_now:.1f} · SPY={spy_now:.0f}（50日均线{spy_ma50:.0f}）")
-except Exception as e:
-    st.caption(f"大盘环境读取失败：{e}")
+@st.fragment(run_every="30s")
+def _live_regime_banner():
+    try:
+        vix_now, spy_now, spy_ma50, risk_off = market_regime()
+        if risk_off:
+            st.error(f"🔴 高波动/弱势环境 · VIX={vix_now:.1f} · SPY={spy_now:.0f}（50日均线{spy_ma50:.0f}）"
+                     " —— 多头策略建议减仓或观望，仅供参考、非自动执行")
+        else:
+            st.success(f"🟢 环境正常 · VIX={vix_now:.1f} · SPY={spy_now:.0f}（50日均线{spy_ma50:.0f}）")
+        st.caption(f"每30秒自动检查一次 · 最后检查 {dt.datetime.now().strftime('%H:%M:%S')}")
+    except Exception as e:
+        st.caption(f"大盘环境读取失败：{e}")
+
+
+_live_regime_banner()
 
 if st.button("🔍 扫描自选池信号（金叉/死叉/RSI超买超卖 + 市场宽度）"):
     st.session_state["scan_res"], st.session_state["breadth"] = scan_universe()

@@ -43,13 +43,26 @@ except Exception as e:
 g_close = gold["Close"].dropna()
 g_ret = g_close.pct_change().dropna()
 
-# ---------- 体检 ----------
-st.subheader(f"🩺 黄金现价 · GC=F（{'联网实时' if src=='live' else '本地缓存'}）")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("最新价", f"{g_close.iloc[-1]:.1f}", f"{g_ret.iloc[-1]:+.2%}", delta_color="inverse")
-c2.metric("累计收益", f"{(1+g_ret).prod()-1:.1%}")
-c3.metric("最大回撤", f"{qs.stats.max_drawdown(g_ret):.1%}")
-c4.metric("夏普比率", f"{qs.stats.sharpe(g_ret):.2f}")
+# ---------- 体检（实时价格条：每30秒自动重跑，不用你点任何东西） ----------
+st.subheader("🩺 黄金现价 · GC=F")
+
+
+@st.fragment(run_every="30s")
+def _live_gold_ticker():
+    g, src2 = get_price("GC=F", "us", start, end)
+    close = g["Close"].dropna()
+    ret = close.pct_change().dropna()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("最新价", f"{close.iloc[-1]:.1f}", f"{ret.iloc[-1]:+.2%}", delta_color="inverse")
+    c2.metric("累计收益", f"{(1+ret).prod()-1:.1%}")
+    c3.metric("最大回撤", f"{qs.stats.max_drawdown(ret):.1%}")
+    c4.metric("夏普比率", f"{qs.stats.sharpe(ret):.2f}")
+    tag = "🟢 联网实时" if src2 == "live" else "⚠️ 本地缓存"
+    st.caption(f"{tag} · 每30秒自动检查一次 · 最后检查 {dt.datetime.now().strftime('%H:%M:%S')}"
+              "（数据源本身按分钟级更新，非逐笔tick）")
+
+
+_live_gold_ticker()
 
 fig_k = go.Figure(go.Candlestick(x=gold.index, open=gold["Open"], high=gold["High"],
                                  low=gold["Low"], close=gold["Close"], name="黄金",
