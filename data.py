@@ -98,7 +98,7 @@ def _cn_etf(symbol, start, end):
 
 
 def _fetch(symbol, market, start, end):
-    csv = DATA / f"{market}_{_safe(symbol)}.csv"
+    cache = DATA / f"{market}_{_safe(symbol)}.parquet"  # parquet：比CSV快、体积小、保留dtype
     last_err = None
     for _ in range(3):
         try:
@@ -118,13 +118,13 @@ def _fetch(symbol, market, start, end):
                 raise ValueError(f"未知 market: {market}")
             if df is None or df.empty:
                 raise ValueError("空数据")
-            df.to_csv(csv, encoding="utf-8-sig")
+            df.to_parquet(cache)
             return df, "live"
         except Exception as e:
             last_err = e
             time.sleep(1.2)
-    if csv.exists():
-        return pd.read_csv(csv, index_col="Date", parse_dates=True), "cache"
+    if cache.exists():
+        return pd.read_parquet(cache), "cache"
     raise last_err
 
 
