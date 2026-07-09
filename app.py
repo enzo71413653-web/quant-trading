@@ -1,11 +1,10 @@
-"""策略回测与参数寻优沙盒。多市场，含摩擦成本、多空方向、网格寻优热力图。"""
+"""大盘雷达 + 策略回测与参数寻优沙盒。多市场，含摩擦成本、多空方向、买卖点标注、吊灯止损、ATR仓位计算。"""
 import sys
 import pathlib
 import itertools
+import datetime as dt
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-
-import datetime as dt
 
 import pandas as pd
 import streamlit as st
@@ -15,10 +14,91 @@ from backtesting.lib import crossover
 
 from data import get_price
 from theme import inject_css
+from indicators import sma, rsi, atr as atr_fn, chandelier_exit
+from universe import UNIVERSE
 
 st.set_page_config(page_title="策略回测沙盒", page_icon="📈", layout="wide")
 inject_css()
-st.title("📈 策略回测与参数寻优沙盒")
+
+# ============================================================
+# 📡 大盘雷达（首页顶部：环境红绿灯 + 自选池信号扫描）
+# ============================================================
+st.title("📡 大盘雷达")
+
+
+@st.cache_data(ttl=3600, show_spinner="读取大盘环境…")
+def market_regime():
+    e = dt.date.today().strftime("%Y%m%d")
+    s100 = (dt.date.today() - dt.timedelta(days=100)).strftime("%Y%m%d")
+    vix_df, _ = get_price("^VIX", "us", s100, e)
+    spy_df, _ = get_price("SPY", "us", s100, e)
+    vix_now = vix_df["Close"].iloc[-1]
+    spy_close = spy_df["Close"]
+    spy_now = spy_close.iloc[-1]
+    spy_ma50 = spy_close.rolling(50).mean().iloc[-1]
+    risk_off = bool(vix_now > 25 or spy_now < spy_ma50)
+    return float(vix_now), float(spy_now), float(spy_ma50), risk_off
+
+
+@st.cache_data(ttl=3600, show_spinner="扫描自选池信号中（约37个标的，首次约20-40秒）…")
+def scan_universe():
+    end_d = dt.date.today()
+    s = (end_d - dt.timedelta(days=300)).strftime("%Y%m%d")
+    e = end_d.strftime("%Y%m%d")
+    rows = []
+    for u in UNIVERSE:
+        try:
+            d, _ = get_price(u["symbol"], u["market"], s, e)
+            close = d["Close"].dropna()
+            if len(close) < 65:
+                continue
+            s1, s2 = sma(close, 20), sma(close, 60)
+            golden, death = bool(crossover(s1, s2)), bool(crossover(s2, s1))
+            r = rsi(close, 14).iloc[-1]
+            chg = close.pct_change().iloc[-1]
+            sig = []
+            if golden:
+                sig.append("🟢金叉")
+            if death:
+                sig.append("🔴死叉")
+            if r >= 70:
+                sig.append("⚠️RSI超买")
+            if r <= 30:
+                sig.append("⚠️RSI超卖")
+            if sig:
+                rows.append({"标的": u["name"], "赛道": u["sector"], "信号": " ".join(sig),
+                            "RSI": round(float(r), 0), "涨跌": f"{chg:+.1%}"})
+        except Exception:
+            pass
+    return pd.DataFrame(rows)
+
+
+try:
+    vix_now, spy_now, spy_ma50, risk_off = market_regime()
+    if risk_off:
+        st.error(f"🔴 高波动/弱势环境 · VIX={vix_now:.1f} · SPY={spy_now:.0f}（50日均线{spy_ma50:.0f}）"
+                 " —— 多头策略建议减仓或观望，仅供参考、非自动执行")
+    else:
+        st.success(f"🟢 环境正常 · VIX={vix_now:.1f} · SPY={spy_now:.0f}（50日均线{spy_ma50:.0f}）")
+except Exception as e:
+    st.caption(f"大盘环境读取失败：{e}")
+
+if st.button("🔍 扫描自选池信号（金叉/死叉/RSI超买超卖）"):
+    st.session_state["scan_res"] = scan_universe()
+if "scan_res" in st.session_state:
+    r = st.session_state["scan_res"]
+    if r.empty:
+        st.caption("今日自选池无触发信号。")
+    else:
+        st.dataframe(r, use_container_width=True, hide_index=True)
+st.caption("扫描按需触发（非自动盘前推送）；结果缓存1小时。")
+
+st.divider()
+
+# ============================================================
+# 📈 策略回测与参数寻优
+# ============================================================
+st.header("📈 策略回测与参数寻优")
 
 PRESETS = {
     "英伟达 NVDA": ("NVDA", "us"), "苹果 AAPL": ("AAPL", "us"), "微软 MSFT": ("MSFT", "us"),
@@ -64,17 +144,13 @@ if source == "cache":
     st.caption("⚠️ 用本地缓存（非实时）")
 
 
-def SMA(s, n):
-    return pd.Series(s).rolling(n).mean()
-
-
 class SmaCross(Strategy):
     n1, n2 = 20, 60
     direction = "both"
 
     def init(self):
-        self.s1 = self.I(SMA, self.data.Close, self.n1)
-        self.s2 = self.I(SMA, self.data.Close, self.n2)
+        self.s1 = self.I(sma, self.data.Close, self.n1)
+        self.s2 = self.I(sma, self.data.Close, self.n2)
 
     def next(self):
         if crossover(self.s1, self.s2):
@@ -109,15 +185,61 @@ if mode == "净值曲线":
     c4.metric("交易胜率 / 总次数", f"{win_rate:.1f}% / {n_trades}次")
     c5.metric("基准买入持有", f"{stats['Buy & Hold Return [%]']:.1f}%")
 
+    # ---- K线 + MA + 吊灯止损 + 买卖点标注（消除黑盒）----
+    ce = chandelier_exit(data, 22, 3.0)
+    fig_k = go.Figure()
+    fig_k.add_trace(go.Candlestick(x=data.index, open=data["Open"], high=data["High"],
+                                   low=data["Low"], close=data["Close"], name="K线",
+                                   increasing_line_color="#ef5350", decreasing_line_color="#26a69a"))
+    fig_k.add_trace(go.Scatter(x=data.index, y=sma(data["Close"], n1), name=f"MA{n1}",
+                               line=dict(width=1, color="#f5c518")))
+    fig_k.add_trace(go.Scatter(x=data.index, y=sma(data["Close"], n2), name=f"MA{n2}",
+                               line=dict(width=1, color="#42a5f5")))
+    fig_k.add_trace(go.Scatter(x=data.index, y=ce, name="吊灯止损(22,3×ATR)",
+                               line=dict(width=1, color="#ff9800", dash="dot")))
+    trades = stats["_trades"]
+    if len(trades):
+        win = trades["PnL"] > 0
+        colors = ["#26a69a" if w else "#ef5350" for w in win]
+        fig_k.add_trace(go.Scatter(x=trades["EntryTime"], y=trades["EntryPrice"], mode="markers",
+                                   name="开仓", marker=dict(symbol="triangle-up", size=11,
+                                   color=colors, line=dict(width=1, color="white"))))
+        fig_k.add_trace(go.Scatter(x=trades["ExitTime"], y=trades["ExitPrice"], mode="markers",
+                                   name="平仓", marker=dict(symbol="triangle-down", size=11,
+                                   color=colors, line=dict(width=1, color="white"))))
+    fig_k.update_layout(height=520, template="plotly_dark", hovermode="x unified",
+                        xaxis_rangeslider_visible=False, margin=dict(t=20, b=40),
+                        legend=dict(orientation="h", y=-0.15))
+    st.plotly_chart(fig_k, use_container_width=True, config={"scrollZoom": True})
+    st.caption("三角朝上=开仓、朝下=平仓；绿=该笔盈利、红=该笔亏损。橙色虚线=吊灯止损，跌破视为趋势走坏。")
+
     eq = stats["_equity_curve"]["Equity"]
     bh = data["Close"] / data["Close"].iloc[0] * eq.iloc[0]
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=bh.index, y=bh, name="基准买入持有", line=dict(color="#42a5f5")))
     fig.add_trace(go.Scatter(x=eq.index, y=eq, name=f"策略（{dir_label}）", line=dict(color="#26a69a")))
-    fig.update_layout(height=460, template="plotly_dark", hovermode="x unified",
+    fig.update_layout(height=360, template="plotly_dark", hovermode="x unified",
                       margin=dict(t=20, b=40), legend=dict(orientation="h", y=-0.15),
                       yaxis_title="净值")
     st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
+
+    # ---- ATR 仓位计算器 ----
+    with st.expander("🧮 ATR 仓位计算器（买多少，而不是拍脑袋）", expanded=True):
+        p1, p2, p3 = st.columns(3)
+        account = p1.number_input("账户总资金", min_value=1000, value=100000, step=1000)
+        risk_pct = p2.slider("单笔愿承担最大亏损（占总资金%）", 0.1, 5.0, 1.0, 0.1) / 100
+        atr_mult = p3.slider("止损距离＝ATR × 倍数", 1.0, 5.0, 2.0, 0.5)
+        atr_val = atr_fn(data, 14).iloc[-1]
+        stop_dist = atr_val * atr_mult
+        risk_amt = account * risk_pct
+        shares = int(risk_amt / stop_dist) if stop_dist > 0 else 0
+        pos_value = shares * data["Close"].iloc[-1]
+        q1, q2, q3, q4 = st.columns(4)
+        q1.metric("ATR(14)", f"{atr_val:.2f}")
+        q2.metric("止损距离", f"{stop_dist:.2f}")
+        q3.metric("建议买入股数", f"{shares:,}")
+        q4.metric("占用资金 / 占比", f"{pos_value:,.0f} / {pos_value/account:.1%}")
+        st.caption("逻辑：亏到止损距离时，损失恰好等于你设定的'单笔愿承担最大亏损'。波动越大（ATR越高），建议仓位越小。")
 
 else:
     st.sidebar.header("⑤ 网格范围")

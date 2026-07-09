@@ -17,6 +17,7 @@ from plotly.subplots import make_subplots
 from data import get_price, get_news
 from universe import SECTORS, by_sector
 from theme import inject_css
+from indicators import sma, rsi as _rsi, macd as _macd
 
 st.set_page_config(page_title="个股研究系统", page_icon="🔬", layout="wide")
 inject_css()
@@ -62,19 +63,6 @@ except Exception as e:
     st.stop()
 close = df["Close"].dropna()
 returns = close.pct_change().dropna()
-
-
-def _rsi(s, n):
-    d = s.diff()
-    up = d.clip(lower=0).rolling(n).mean()
-    dn = (-d.clip(upper=0)).rolling(n).mean().replace(0, 1e-9)
-    return 100 - 100 / (1 + up / dn)
-
-
-def _macd(s, f=12, sl=26, sig=9):
-    dif = s.ewm(span=f).mean() - s.ewm(span=sl).mean()
-    dea = dif.ewm(span=sig).mean()
-    return dif, dea, (dif - dea) * 2
 
 
 def _rolling_sharpe(r, window=126):
@@ -130,6 +118,17 @@ with tab1:
                      help="上涨交易日占比")
     except Exception:
         pass
+    if market == "us":
+        try:
+            import yfinance as yf
+            opt = yf.Ticker(symbol)
+            chain = opt.option_chain(opt.options[0])
+            pc = chain.puts["volume"].sum() / max(chain.calls["volume"].sum(), 1)
+            st.metric("Put/Call 成交量比", f"{pc:.2f}",
+                     help="看跌/看涨期权成交量之比（最近到期合约，免费数据、非实时大单/Gamma）；"
+                          ">1 偏谨慎情绪，<0.7 偏乐观情绪，仅供参考")
+        except Exception:
+            pass
 
     rows = [("💹 K线 + 均线", 0.46)]
     if show_vol:
@@ -236,8 +235,13 @@ CYCLE = {
     "指数": "宽基指数反映整体市场情绪与流动性；拿个股跟指数比，能看出它跑赢还是跑输大盘（超额收益 α）。",
 }
 with tab3:
-    st.markdown("**长期价格（多年周期视角）**")
-    st.line_chart(close)
+    st.markdown("**长期价格（多年周期视角，K线）**")
+    fk = go.Figure(go.Candlestick(x=df.index, open=df["Open"], high=df["High"],
+                                  low=df["Low"], close=df["Close"], name="K线",
+                                  increasing_line_color="#ef5350", decreasing_line_color="#26a69a"))
+    fk.update_layout(height=320, template="plotly_dark", xaxis_rangeslider_visible=False,
+                     margin=dict(t=10, b=10, l=0, r=0))
+    st.plotly_chart(fk, use_container_width=True)
 
     cc = st.columns(2)
     cc[0].markdown("**滚动 1 年收益**")
