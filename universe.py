@@ -2,10 +2,7 @@
 market ∈ {cn_stock, cn_etf, us, kr, jp}；us/kr/jp 的 symbol 直接用 yfinance 代码。
 """
 UNIVERSE = [
-    # 半导体
-    {"name": "中芯国际", "symbol": "688981", "market": "cn_stock", "sector": "半导体"},
-    {"name": "北方华创", "symbol": "002371", "market": "cn_stock", "sector": "半导体"},
-    {"name": "韦尔股份", "symbol": "603501", "market": "cn_stock", "sector": "半导体"},
+    # 半导体（美股在前，云上默认可用）
     {"name": "英伟达 NVDA", "symbol": "NVDA", "market": "us", "sector": "半导体"},
     {"name": "AMD", "symbol": "AMD", "market": "us", "sector": "半导体"},
     {"name": "台积电 TSM", "symbol": "TSM", "market": "us", "sector": "半导体"},
@@ -14,6 +11,9 @@ UNIVERSE = [
     {"name": "英特尔 INTC", "symbol": "INTC", "market": "us", "sector": "半导体"},
     {"name": "ASML", "symbol": "ASML", "market": "us", "sector": "半导体"},
     {"name": "费城半导体 SOXX", "symbol": "SOXX", "market": "us", "sector": "半导体"},
+    {"name": "中芯国际", "symbol": "688981", "market": "cn_stock", "sector": "半导体"},
+    {"name": "北方华创", "symbol": "002371", "market": "cn_stock", "sector": "半导体"},
+    {"name": "韦尔股份", "symbol": "603501", "market": "cn_stock", "sector": "半导体"},
     # 存储
     {"name": "美光 MU", "symbol": "MU", "market": "us", "sector": "存储"},
     {"name": "闪迪 SNDK", "symbol": "SNDK", "market": "us", "sector": "存储"},

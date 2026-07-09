@@ -1,146 +1,70 @@
-"""我的量化学习台 —— Streamlit 交互版
-运行：先激活环境，再 `streamlit run app.py`，浏览器会自动打开 localhost:8501。
-左边选标的 / 输代码 / 拖滑块，右边图表和指标实时变化。
+"""我的量化学习台（首页）—— 单标的：体检 + 双均线回测。多市场，默认美股。
+纯学习 / 纸面回测，不涉及真实交易。回测赚钱 ≠ 实盘赚钱。
 """
-import time
-from pathlib import Path
+import sys
+import pathlib
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import pandas as pd
-import akshare as ak
 import quantstats as qs
 import streamlit as st
 from backtesting import Backtest, Strategy
 from backtesting.lib import crossover
 
+from data import get_price
+
 st.set_page_config(page_title="我的量化学习台", page_icon="📈", layout="wide")
 st.title("📈 我的量化学习台")
 st.caption("纯学习 / 纸面回测，不涉及真实交易。回测赚钱 ≠ 实盘赚钱。")
 
-DATA = Path(__file__).resolve().parent / "data"
-DATA.mkdir(exist_ok=True)
-
-# ---------------- 侧边栏：参数 ----------------
 PRESETS = {
-    "沪深300ETF (510300)": ("510300", "etf"),
-    "上证50ETF (510050)": ("510050", "etf"),
-    "中证500ETF (510500)": ("510500", "etf"),
-    "中证1000ETF (512100)": ("512100", "etf"),
-    "创业板ETF (159915)": ("159915", "etf"),
-    "科创50ETF (588000)": ("588000", "etf"),
-    "红利ETF (510880)": ("510880", "etf"),
-    "纳指ETF (513100)": ("513100", "etf"),
-    "标普500ETF (513500)": ("513500", "etf"),
-    "中概互联ETF (513050)": ("513050", "etf"),
-    "黄金ETF (518880)": ("518880", "etf"),
-    "恒生ETF (159920)": ("159920", "etf"),
-    "贵州茅台 (600519)": ("600519", "stock"),
-    "宁德时代 (300750)": ("300750", "stock"),
-    "比亚迪 (002594)": ("002594", "stock"),
-    "招商银行 (600036)": ("600036", "stock"),
-    "五粮液 (000858)": ("000858", "stock"),
-    "中国平安 (601318)": ("601318", "stock"),
+    "英伟达 NVDA": ("NVDA", "us"), "苹果 AAPL": ("AAPL", "us"), "微软 MSFT": ("MSFT", "us"),
+    "台积电 TSM": ("TSM", "us"), "美光 MU": ("MU", "us"), "特斯拉 TSLA": ("TSLA", "us"),
+    "标普500 SPY": ("SPY", "us"), "纳指100 QQQ": ("QQQ", "us"), "费城半导体 SOXX": ("SOXX", "us"),
+    "三星电子(韩)": ("005930.KS", "kr"), "SK海力士(韩)": ("000660.KS", "kr"),
+    "村田(日)": ("6981.T", "jp"),
 }
 st.sidebar.header("① 选标的")
 choice = st.sidebar.selectbox("常用标的", list(PRESETS))
-custom = st.sidebar.text_input("或直接输代码（会覆盖上面）", "").strip()
-custom_kind = st.sidebar.radio("代码类型", ["ETF/基金", "股票"], horizontal=True)
-if custom:
-    symbol = custom
-    kind = "etf" if custom_kind.startswith("ETF") else "stock"
-    label = f"{symbol}（自定义）"
-else:
-    symbol, kind = PRESETS[choice]
-    label = choice
-
-start = st.sidebar.text_input("起始日期 (YYYYMMDD)", "20190101")
-end = st.sidebar.text_input("结束日期 (YYYYMMDD)", "20261231")
-
-st.sidebar.header("② 调策略（双均线）")
+sym, mkt = PRESETS[choice]
+cust = st.sidebar.text_input("或输代码（覆盖）", "").strip()
+cust_mkt = st.sidebar.selectbox("市场", ["us", "kr", "jp", "cn_stock", "cn_etf"])
+if cust:
+    sym, mkt = cust, cust_mkt
+start = st.sidebar.text_input("起始 (YYYYMMDD)", "20190101")
+end = st.sidebar.text_input("结束 (YYYYMMDD)", "20261231")
+st.sidebar.header("② 双均线")
 n1 = st.sidebar.slider("短均线 n1", 5, 60, 20)
 n2 = st.sidebar.slider("长均线 n2", 20, 200, 60)
-
-if st.sidebar.button("🔄 刷新最新数据"):
+if st.sidebar.button("🔄 刷新"):
     st.cache_data.clear()
     st.rerun()
 
-
-@st.cache_data(ttl=3600, show_spinner="拉取行情中…")
-def load(symbol, kind, start, end):
-    """先联网拉取（重试2次），失败则回退本地缓存 CSV。"""
-    csv = DATA / f"{symbol}.csv"
-    last_err = None
-    for _ in range(2):
-        try:
-            if kind == "etf":
-                df = ak.fund_etf_hist_em(symbol=symbol, period="daily",
-                                         start_date=start, end_date=end, adjust="qfq")
-            else:
-                df = ak.stock_zh_a_hist(symbol=symbol, period="daily",
-                                        start_date=start, end_date=end, adjust="qfq")
-            df = df.rename(columns={"日期": "Date", "开盘": "Open", "收盘": "Close",
-                                    "最高": "High", "最低": "Low", "成交量": "Volume"})
-            df["Date"] = pd.to_datetime(df["Date"])
-            df = df.set_index("Date").sort_index()[["Open", "High", "Low", "Close", "Volume"]]
-            df.to_csv(csv, encoding="utf-8-sig")
-            return df, "online"
-        except Exception as e:
-            last_err = e
-            time.sleep(1.5)
-    if csv.exists():
-        return pd.read_csv(csv, index_col="Date", parse_dates=True), "cache"
-    raise last_err
-
-
 try:
-    df, source = load(symbol, kind, start, end)
+    df, source = get_price(sym, mkt, start, end)
 except Exception as e:
-    st.error(f"数据拉取失败（重试后仍失败），且本地没有该标的缓存：\n\n{e}\n\n"
-             "多半是数据源（东方财富）临时抽风。点侧栏『🔄 刷新最新数据』重试；"
-             "或先选『沪深300ETF』——它已有本地缓存，一定能打开。")
+    st.error(f"数据拉取失败：{e}（点侧栏 🔄 重试，或换标的）")
     st.stop()
-if df.empty:
-    st.warning("这段时间没有数据，换个日期区间或代码。")
-    st.stop()
-if source == "cache":
-    st.caption("⚠️ 联网失败，当前用的是**本地缓存**数据（可能不是最新，点侧栏🔄可重试联网）。")
+close = df["Close"].dropna()
+returns = close.pct_change().dropna()
 
-returns = df["Close"].pct_change().dropna()
+st.subheader(f"🩺 体检 · {cust if cust else choice}")
+a, b, c, d = st.columns(4)
+a.metric("最新价", f"{close.iloc[-1]:.2f}")
+b.metric("累计收益", f"{(1 + returns).prod() - 1:.1%}")
+c.metric("最大回撤", f"{qs.stats.max_drawdown(returns):.1%}")
+d.metric("夏普", f"{qs.stats.sharpe(returns):.2f}")
+st.line_chart(df["Close"])
 
-# ---------------- Part 1：体检 ----------------
-st.subheader(f"🩺 体检 · {label}")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("累计收益", f"{(1 + returns).prod() - 1:.1%}")
-c2.metric("年化波动", f"{qs.stats.volatility(returns):.1%}")
-c3.metric("最大回撤", f"{qs.stats.max_drawdown(returns):.1%}")
-c4.metric("夏普比率", f"{qs.stats.sharpe(returns):.2f}")
-try:
-    d1, d2, d3, d4 = st.columns(4)
-    d1.metric("年化收益", f"{qs.stats.cagr(returns):.1%}")
-    d2.metric("索提诺", f"{qs.stats.sortino(returns):.2f}")
-    d3.metric("卡玛比率", f"{qs.stats.calmar(returns):.2f}")
-    d4.metric("日胜率", f"{qs.stats.win_rate(returns):.1%}")
-except Exception as e:
-    st.caption(f"部分进阶指标暂不可用：{e}")
-
-with st.expander("📊 完整体检指标表（quantstats 全套几十个指标）"):
-    try:
-        st.dataframe(qs.reports.metrics(returns, mode="full", display=False),
-                     use_container_width=True)
-    except Exception as e:
-        st.caption(f"完整指标表暂不可用：{e}")
-
-left, right = st.columns(2)
-left.markdown("**价格走势（前复权）**")
-left.line_chart(df["Close"])
-right.markdown("**回撤 · 水下图（离前高多远）**")
-right.area_chart(df["Close"] / df["Close"].cummax() - 1)
-
-# ---------------- Part 2：回测 ----------------
 st.subheader(f"🔁 双均线回测 · n1={n1}, n2={n2}")
+if n1 >= n2:
+    st.warning("短均线要小于长均线（n1 < n2）。")
+    st.stop()
 
 
-def SMA(series, n):
-    return pd.Series(series).rolling(n).mean()
+def SMA(s, n):
+    return pd.Series(s).rolling(n).mean()
 
 
 class SmaCross(Strategy):
@@ -157,35 +81,19 @@ class SmaCross(Strategy):
             self.position.close()
 
 
-if n1 >= n2:
-    st.warning("短均线要小于长均线（n1 < n2），才是'快线穿慢线'。")
-    st.stop()
-
-bt = Backtest(df, SmaCross, cash=100_000, commission=0.001)
-stats = bt.run(n1=n1, n2=n2)
-
-b1, b2, b3, b4 = st.columns(4)
-b1.metric("策略收益", f"{stats['Return [%]']:.1f}%")
-b2.metric("买入持有", f"{stats['Buy & Hold Return [%]']:.1f}%")
-b3.metric("策略夏普", f"{stats['Sharpe Ratio']:.2f}")
-b4.metric("胜率", f"{stats['Win Rate [%]']:.0f}%")
-
-with st.expander("🔬 完整回测指标（交易次数 / 手续费 / 最大回撤 …）"):
-    s = stats.drop(["_strategy", "_equity_curve", "_trades"], errors="ignore")
-    st.dataframe(s.astype(str), use_container_width=True)
-
-st.markdown("**价格 + 两条均线（看它们在哪交叉）**")
-st.line_chart(pd.DataFrame({
-    "Close": df["Close"],
-    f"SMA{n1}": SMA(df["Close"], n1),
-    f"SMA{n2}": SMA(df["Close"], n2),
-}))
-
-st.markdown("**策略权益曲线（10万本金滚到哪）**")
-st.line_chart(stats["_equity_curve"]["Equity"])
-
-if stats["Return [%]"] < stats["Buy & Hold Return [%]"]:
-    st.info("📉 这套参数下策略跑输了'买入持有'——很正常，多数简单策略都这样。"
-            "拖滑块换参数试试，体会'调参很容易骗自己'（这就是过拟合）。")
-else:
-    st.success("这套参数暂时跑赢买入持有 —— 但别急着当圣杯，换段时间或换标的很可能就翻车。")
+try:
+    bt = Backtest(df[["Open", "High", "Low", "Close", "Volume"]], SmaCross,
+                  cash=100_000, commission=0.001)
+    stats = bt.run(n1=n1, n2=n2)
+    e, f, g, h = st.columns(4)
+    e.metric("策略收益", f"{stats['Return [%]']:.1f}%")
+    f.metric("买入持有", f"{stats['Buy & Hold Return [%]']:.1f}%")
+    g.metric("策略夏普", f"{stats['Sharpe Ratio']:.2f}")
+    h.metric("胜率", f"{stats['Win Rate [%]']:.0f}%")
+    st.line_chart(stats["_equity_curve"]["Equity"])
+    if stats["Return [%]"] < stats["Buy & Hold Return [%]"]:
+        st.info("📉 这套参数跑输了'买入持有'——多数简单策略如此。拖滑块试试，体会'调参很容易骗自己'（过拟合）。")
+    else:
+        st.success("这套参数暂时跑赢买入持有 —— 别当圣杯，换标的/时段很可能翻车。")
+except Exception as ex:
+    st.warning(f"回测暂不可用：{ex}")

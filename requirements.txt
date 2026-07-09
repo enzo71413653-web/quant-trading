@@ -8,4 +8,4 @@ matplotlib>=3.8      # 画图（上面两个依赖）
 streamlit>=1.40      # 交互式网页：选股+滑块调参+实时图表
 plotly>=5.20         # 交互式富可视化：K线/RSI/MACD/多子图
 yfinance>=0.2        # 美股/韩股/日股 行情
-jupyterlab>=4.0      # 可选：写 notebook 边学边试
+certifi              # 证书（云端/穿透部署更稳）
