@@ -6,6 +6,7 @@ import datetime as dt
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -42,17 +43,23 @@ def market_regime():
 
 @st.cache_data(ttl=3600, show_spinner="扫描自选池信号中（约37个标的，首次约20-40秒）…")
 def scan_universe():
+    """一次遍历同时算：信号表 + 市场宽度（池内站上50日均线的占比）。避免重复拉取。"""
     end_d = dt.date.today()
     s = (end_d - dt.timedelta(days=300)).strftime("%Y%m%d")
     e = end_d.strftime("%Y%m%d")
     rows = []
+    above_ma50 = total = 0
     for u in UNIVERSE:
         try:
             d, _ = get_price(u["symbol"], u["market"], s, e)
             close = d["Close"].dropna()
             if len(close) < 65:
                 continue
+            total += 1
             s1, s2 = sma(close, 20), sma(close, 60)
+            ma50 = sma(close, 50).iloc[-1]
+            if close.iloc[-1] > ma50:
+                above_ma50 += 1
             golden, death = bool(crossover(s1, s2)), bool(crossover(s2, s1))
             r = rsi(close, 14).iloc[-1]
             chg = close.pct_change().iloc[-1]
@@ -70,7 +77,8 @@ def scan_universe():
                             "RSI": round(float(r), 0), "涨跌": f"{chg:+.1%}"})
         except Exception:
             pass
-    return pd.DataFrame(rows)
+    breadth = above_ma50 / total if total else None
+    return pd.DataFrame(rows), breadth
 
 
 try:
@@ -83,9 +91,15 @@ try:
 except Exception as e:
     st.caption(f"大盘环境读取失败：{e}")
 
-if st.button("🔍 扫描自选池信号（金叉/死叉/RSI超买超卖）"):
-    st.session_state["scan_res"] = scan_universe()
+if st.button("🔍 扫描自选池信号（金叉/死叉/RSI超买超卖 + 市场宽度）"):
+    st.session_state["scan_res"], st.session_state["breadth"] = scan_universe()
 if "scan_res" in st.session_state:
+    breadth = st.session_state.get("breadth")
+    if breadth is not None:
+        st.markdown(f"**自选池内部温度计：{breadth:.0%} 站上各自的50日均线**")
+        st.progress(breadth)
+        if breadth < 0.35:
+            st.caption("⚠️ 池内多数标的已跌破50日均线——即便大盘指数还撑着，内部也可能在走弱（顶背离）。")
     r = st.session_state["scan_res"]
     if r.empty:
         st.caption("今日自选池无触发信号。")
@@ -128,7 +142,7 @@ dir_label = st.sidebar.radio("方向", ["仅做多", "仅做空", "多空双向"
 direction = {"仅做多": "long", "仅做空": "short", "多空双向": "both"}[dir_label]
 
 st.sidebar.header("④ 展示模式")
-mode = st.sidebar.radio("模式", ["净值曲线", "参数寻优热力图"])
+mode = st.sidebar.radio("模式", ["净值曲线", "参数寻优热力图", "蒙特卡洛压力测试"])
 
 if st.sidebar.button("🔄 刷新数据"):
     st.cache_data.clear()
@@ -241,7 +255,13 @@ if mode == "净值曲线":
         q4.metric("占用资金 / 占比", f"{pos_value:,.0f} / {pos_value/account:.1%}")
         st.caption("逻辑：亏到止损距离时，损失恰好等于你设定的'单笔愿承担最大亏损'。波动越大（ATR越高），建议仓位越小。")
 
-else:
+        stop_price = data["Close"].iloc[-1] - stop_dist
+        order_summary = (f'{{\n  "symbol": "{sym}",\n  "side": "BUY",\n  "qty": {shares},\n'
+                         f'  "ref_price": {data["Close"].iloc[-1]:.2f},\n  "stop_loss": {stop_price:.2f}\n}}')
+        st.caption("👇 订单摘要（仅供你手动核对后自行在券商下单，本系统不连接任何券商、不自动下单）")
+        st.code(order_summary, language="json")
+
+elif mode == "参数寻优热力图":
     st.sidebar.header("⑤ 网格范围")
     n1_lo, n1_hi = st.sidebar.slider("短均线范围", 5, 60, (5, 30))
     n2_lo, n2_hi = st.sidebar.slider("长均线范围", 20, 250, (30, 120))
@@ -288,3 +308,52 @@ else:
             st.caption("找一片颜色均匀的高原，而不是孤立的一个深色尖峰——尖峰多半是过拟合。")
     else:
         st.info("设好范围后点「▶ 运行网格寻优」（首次约10-20秒，之后同参数走缓存秒开）。")
+
+else:  # 蒙特卡洛压力测试
+    st.caption("⚠️ 这不是预测未来价格。做法：把本策略【历史上真实发生过的每笔交易收益率】重新随机洗牌1000次，"
+               "看同样这批交易换个先后顺序会得到多惨/多好的结果——用来量化'运气/顺序'对回测表现的影响。")
+    n1 = st.sidebar.slider("短均线 n1", 5, 60, 20)
+    n2 = st.sidebar.slider("长均线 n2", 20, 250, 60)
+    n_sims = st.sidebar.slider("模拟次数", 200, 3000, 1000, 200)
+    if n1 >= n2:
+        st.warning("n1 必须小于 n2")
+        st.stop()
+
+    bt = Backtest(data, SmaCross, cash=100_000, commission=commission)
+    stats = bt.run(n1=n1, n2=n2, direction=direction)
+    trades = stats["_trades"]
+    n_trades = len(trades)
+
+    if n_trades < 5:
+        st.warning(f"该参数组合只产生 {n_trades} 笔交易，样本太少，重新洗牌没有统计意义。换参数或拉长回测区间。")
+    else:
+        if n_trades < 15:
+            st.caption(f"⚠️ 样本仅 {n_trades} 笔交易，bootstrap 结果的置信度有限，仅供粗略参考。")
+        rets = trades["ReturnPct"].values
+        rng = np.random.default_rng(42)
+        paths = np.empty((n_sims, n_trades + 1))
+        paths[:, 0] = 100_000.0
+        for i in range(n_sims):
+            sample = rng.choice(rets, size=n_trades, replace=True)
+            paths[i, 1:] = 100_000.0 * np.cumprod(1 + sample)
+        p5, p50, p95 = (np.percentile(paths, q, axis=0) for q in (5, 50, 95))
+        running_max = np.maximum.accumulate(paths, axis=1)
+        worst_dd = ((paths - running_max) / running_max).min(axis=1)
+
+        x = list(range(n_trades + 1))
+        fig_mc = go.Figure()
+        fig_mc.add_trace(go.Scatter(x=x, y=p95, line=dict(width=0), showlegend=False))
+        fig_mc.add_trace(go.Scatter(x=x, y=p5, fill="tonexty", fillcolor="rgba(66,165,245,0.2)",
+                                    line=dict(width=0), name="5%~95% 区间"))
+        fig_mc.add_trace(go.Scatter(x=x, y=p50, line=dict(color="#42a5f5", width=2), name="中位数路径"))
+        fig_mc.update_layout(height=440, template="plotly_dark", margin=dict(t=20, b=40),
+                             xaxis_title="第几笔交易之后", yaxis_title="模拟净值",
+                             legend=dict(orientation="h", y=-0.15))
+        st.plotly_chart(fig_mc, use_container_width=True)
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("原始回测收益", f"{stats['Return [%]']:.0f}%", help="固定这一种交易顺序的结果")
+        c2.metric(f"{n_sims}次重排·中位数收益", f"{(p50[-1]/100_000-1)*100:.0f}%")
+        c3.metric("最差5%情景·最终净值", f"{p5[-1]:,.0f}", help="1000次重排里最差的5%落在这以下")
+        c4.metric("最差5%情景·回撤", f"{np.percentile(worst_dd,5):.1%}", help="比单次回测显示的最大回撤更接近'真实可能发生的最坏情况'")
+        st.caption("如果'最差5%回撤'远比单次回测的最大回撤更吓人，说明这个策略的表现高度依赖交易顺序/运气，不够稳健。")
