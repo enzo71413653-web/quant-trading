@@ -133,12 +133,39 @@ def get_price(symbol, market, start="20190101", end="20261231"):
     return _fetch(symbol, market, start, end)
 
 
-def _fetch_news(keywords, limit):
-    df = ak.stock_info_global_em()
-    tcol = next((c for c in df.columns if "标题" in c or "title" in c.lower()), df.columns[0])
+def _one_news(fn):
+    df = fn()
+    tcol = next((c for c in df.columns if "标题" in c or "title" in c.lower()), None)
     scol = next((c for c in df.columns if "摘要" in c or "内容" in c or "简介" in c), None)
     dcol = next((c for c in df.columns if "时间" in c or "日期" in c or "date" in c.lower()), None)
-    text = df[tcol].astype(str) + " " + (df[scol].astype(str) if scol else "")
+    return pd.DataFrame({
+        "时间": df[dcol].astype(str) if dcol else "",
+        "标题": df[tcol].astype(str) if tcol else "",
+        "摘要": df[scol].astype(str) if scol else "",
+    })
+
+
+def _all_news():
+    """合并 东财 + 同花顺 + 新浪 三个免费权威源，去重。"""
+    frames = []
+    for fn in (ak.stock_info_global_em, ak.stock_info_global_ths, ak.stock_info_global_sina):
+        try:
+            frames.append(_one_news(fn))
+        except Exception:
+            pass
+    if not frames:
+        return pd.DataFrame(columns=["时间", "标题", "摘要"])
+    out = pd.concat(frames, ignore_index=True)
+    empty = out["标题"].astype(str).str.strip() == ""
+    out.loc[empty, "标题"] = out.loc[empty, "摘要"].astype(str).str[:40]
+    return out.drop_duplicates(subset=["标题"]).reset_index(drop=True)
+
+
+def _fetch_news(keywords, limit):
+    df = _all_news()
+    if df.empty:
+        return df
+    text = df["标题"].astype(str) + " " + df["摘要"].astype(str)
     hit = df
     if keywords:
         kws = [str(k).replace("ETF", "").replace("指数", "").strip() for k in keywords]
@@ -146,13 +173,8 @@ def _fetch_news(keywords, limit):
         if kws:
             mask = text.str.contains("|".join(re.escape(k) for k in kws), case=False, na=False)
             if mask.any():
-                hit = df[mask]      # 有匹配就用匹配；没匹配就退回全部大盘快讯(永不空白)
-    out = pd.DataFrame({
-        "时间": hit[dcol].astype(str) if dcol else "",
-        "标题": hit[tcol].astype(str),
-        "摘要": hit[scol].astype(str) if scol else "",
-    })
-    return out.head(limit).reset_index(drop=True)
+                hit = df[mask]      # 有匹配用匹配；没匹配退回全部大盘快讯(永不空白)
+    return hit.head(limit).reset_index(drop=True)
 
 
 @st.cache_data(ttl=300, show_spinner="拉取快讯中…")
