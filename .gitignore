@@ -5,3 +5,5 @@ venv/
 data/
 reports/
 .ipynb_checkpoints/
+.streamlit/secrets.toml
+.env

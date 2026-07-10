@@ -133,15 +133,43 @@ def get_price(symbol, market, start="20190101", end="20261231"):
     return _fetch(symbol, market, start, end)
 
 
+def _alpaca_creds():
+    try:
+        return st.secrets["ALPACA_API_KEY_ID"], st.secrets["ALPACA_SECRET_KEY"]
+    except Exception:
+        return None, None
+
+
+@st.cache_data(ttl=3, show_spinner=False)
+def get_alpaca_quote(symbol):
+    """Alpaca官方API的真实时成交价（IEX源，非延迟数据）。仅覆盖美股，需在 st.secrets 配置密钥。"""
+    key, secret = _alpaca_creds()
+    if not key or not secret:
+        raise ValueError("未配置 Alpaca 密钥（见 .streamlit/secrets.toml.example）")
+    import requests
+    r = requests.get(
+        f"https://data.alpaca.markets/v2/stocks/{symbol}/trades/latest",
+        headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret, "Accept": "application/json"},
+        params={"feed": "iex"}, timeout=5,
+    )
+    r.raise_for_status()
+    trade = r.json()["trade"]
+    return float(trade["p"]), trade["t"]
+
+
 @st.cache_data(ttl=10, show_spinner=False)
 def get_quote(symbol):
-    """近实时报价（非日线收盘价），用于'最新价'这类要跳动的展示。仅支持yfinance覆盖的标的
-    （us/kr/jp）；免费数据通常有约15分钟延迟，但确实会随行情变化，不是"这根日K线走完前不变"。
+    """近实时报价（非日线收盘价），用于'最新价'这类要跳动的展示。
+    美股若配置了Alpaca密钥：走真实时IEX成交价。否则/其他市场：回退 yfinance fast_info
+    （约15分钟延迟，但覆盖面更广：黄金期货/韩股/日股等）。
     """
     import yfinance as yf
     fi = yf.Ticker(symbol).fast_info
-    last = fi.get("lastPrice")
     prev = fi.get("previousClose")
+    try:
+        last, _ = get_alpaca_quote(symbol)
+    except Exception:
+        last = fi.get("lastPrice")
     if last is None:
         raise ValueError("该标的无近实时报价（可能不支持或非交易时段）")
     chg = (last - prev) / prev if prev else 0.0

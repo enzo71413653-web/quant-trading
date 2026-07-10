@@ -10,3 +10,4 @@ plotly>=5.20         # 交互式富可视化：K线/RSI/MACD/多子图
 yfinance>=0.2        # 美股/韩股/日股 行情
 pyarrow>=14           # 本地数据缓存用 Parquet（比CSV快、体积小）
 certifi              # 证书（云端/穿透部署更稳）
+requests             # Alpaca实时报价API调用（可选：未配置密钥时自动回退yfinance）
