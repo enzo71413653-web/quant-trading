@@ -14,7 +14,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from data import get_price, get_news
+from data import get_price, get_news, get_quote
 from universe import SECTORS, by_sector
 from theme import inject_css
 from indicators import sma, rsi as _rsi, macd as _macd
@@ -82,19 +82,29 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
 
 # ---------- Tab1 指标概览 ----------
 with tab1:
-    day = returns.iloc[-1] if len(returns) else 0.0
-    r1 = st.columns(4)
-    r1[0].metric("最新价", f"{close.iloc[-1]:.2f}", f"{day:+.2%}", delta_color="inverse",
-                 help="最新收盘价；下方为当日涨跌幅（红涨绿跌）")
-    cum = (1 + returns).prod() - 1
-    r1[1].metric("累计收益", f"{cum:+.1%}", f"{cum:+.1%}", delta_color="inverse",
-                 help="区间内买入持有的总回报")
-    mdd = qs.stats.max_drawdown(returns)
-    r1[2].metric("最大回撤", f"{mdd:.1%}",
-                 help="从历史最高点回落的最大幅度；越接近 0 越抗跌。你能扛住这个跌幅吗？"
-                      "（该数值恒为负，不做红绿上色——颜色对'恒定符号'的指标没有区分度）")
-    r1[3].metric("夏普比率", f"{qs.stats.sharpe(returns):.2f}",
-                 help="每单位总波动换来的超额收益；>1 较好，0.5 左右一般，<0 别碰")
+    @st.fragment(run_every="10s")
+    def _live_metric_row():
+        day = returns.iloc[-1] if len(returns) else 0.0
+        r1 = st.columns(4)
+        try:
+            last, chg = get_quote(symbol)
+            r1[0].metric("最新价（近实时）", f"{last:.2f}", f"{chg:+.2%}", delta_color="inverse",
+                        help="约15分钟延迟的近实时报价，非日线收盘价")
+        except Exception:
+            r1[0].metric("最新价（日线收盘）", f"{close.iloc[-1]:.2f}", f"{day:+.2%}", delta_color="inverse",
+                        help="该市场暂无近实时报价接口，回退日线收盘价")
+        cum = (1 + returns).prod() - 1
+        r1[1].metric("累计收益", f"{cum:+.1%}", f"{cum:+.1%}", delta_color="inverse",
+                    help="区间内买入持有的总回报")
+        mdd = qs.stats.max_drawdown(returns)
+        r1[2].metric("最大回撤", f"{mdd:.1%}",
+                    help="从历史最高点回落的最大幅度；越接近 0 越抗跌。你能扛住这个跌幅吗？"
+                         "（该数值恒为负，不做红绿上色——颜色对'恒定符号'的指标没有区分度）")
+        r1[3].metric("夏普比率", f"{qs.stats.sharpe(returns):.2f}",
+                    help="每单位总波动换来的超额收益；>1 较好，0.5 左右一般，<0 别碰")
+        st.caption(f"🟢 每10秒自动检查 · 最后检查 {dt.datetime.now().strftime('%H:%M:%S')}")
+
+    _live_metric_row()
     try:
         r2 = st.columns(4)
         cagr = qs.stats.cagr(returns)

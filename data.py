@@ -133,7 +133,7 @@ def get_price(symbol, market, start="20190101", end="20261231"):
     return _fetch(symbol, market, start, end)
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def get_quote(symbol):
     """近实时报价（非日线收盘价），用于'最新价'这类要跳动的展示。仅支持yfinance覆盖的标的
     （us/kr/jp）；免费数据通常有约15分钟延迟，但确实会随行情变化，不是"这根日K线走完前不变"。

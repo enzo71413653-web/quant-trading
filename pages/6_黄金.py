@@ -47,7 +47,7 @@ g_ret = g_close.pct_change().dropna()
 st.subheader("🩺 黄金现价 · GC=F")
 
 
-@st.fragment(run_every="30s")
+@st.fragment(run_every="10s")
 def _live_gold_ticker():
     g, src2 = get_price("GC=F", "us", start, end)
     close = g["Close"].dropna()

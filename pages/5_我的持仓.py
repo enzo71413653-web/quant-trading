@@ -12,7 +12,7 @@ import quantstats as qs
 import streamlit as st
 import plotly.graph_objects as go
 
-from data import get_price
+from data import get_price, get_quote
 from theme import inject_css
 import portfolio as pf
 
@@ -60,7 +60,10 @@ for _, h in holdings.iterrows():
     try:
         d, _ = get_price(h["symbol"], h["market"], start2y, today)
         close = d["Close"].dropna()
-        last = close.iloc[-1]
+        try:
+            last, _ = get_quote(h["symbol"])  # 优先用近实时报价，而不是日线收盘价
+        except Exception:
+            last = close.iloc[-1]
         mv = h["shares"] * last
         cost_total = h["shares"] * h["cost_basis"]
         pnl = mv - cost_total
