@@ -61,14 +61,16 @@ for _, h in holdings.iterrows():
         d, _ = get_price(h["symbol"], h["market"], start2y, today)
         close = d["Close"].dropna()
         try:
-            last, _ = get_quote(h["symbol"])  # 优先用近实时报价，而不是日线收盘价
+            last, _, qsrc = get_quote(h["symbol"])  # 优先用近实时报价，而不是日线收盘价
+            src_label = "🅰️Alpaca" if qsrc == "alpaca" else "yfinance"
         except Exception:
             last = close.iloc[-1]
+            src_label = "日线收盘"
         mv = h["shares"] * last
         cost_total = h["shares"] * h["cost_basis"]
         pnl = mv - cost_total
-        rows.append({"标的": h["symbol"], "份额": h["shares"], "现价": last, "市值": mv,
-                    "成本": cost_total, "浮动盈亏": pnl,
+        rows.append({"标的": h["symbol"], "份额": h["shares"], "现价": last, "数据源": src_label,
+                    "市值": mv, "成本": cost_total, "浮动盈亏": pnl,
                     "盈亏%": (pnl / cost_total * 100) if cost_total else 0.0})
         closes[h["symbol"]] = close
     except Exception as e:

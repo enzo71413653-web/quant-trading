@@ -168,12 +168,14 @@ def get_quote(symbol):
     prev = fi.get("previousClose")
     try:
         last, _ = get_alpaca_quote(symbol)
+        source = "alpaca"
     except Exception:
         last = fi.get("lastPrice")
+        source = "yfinance"
     if last is None:
         raise ValueError("该标的无近实时报价（可能不支持或非交易时段）")
     chg = (last - prev) / prev if prev else 0.0
-    return float(last), float(chg)
+    return float(last), float(chg), source
 
 
 def _one_news(fn):

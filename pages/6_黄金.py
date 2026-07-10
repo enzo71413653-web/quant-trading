@@ -54,16 +54,20 @@ def _live_gold_ticker():
     ret = close.pct_change().dropna()
     c1, c2, c3, c4 = st.columns(4)
     try:
-        last, chg = get_quote("GC=F")
+        last, chg, qsrc = get_quote("GC=F")
         c1.metric("最新价（近实时）", f"{last:.1f}", f"{chg:+.2%}", delta_color="inverse")
         quote_ok = True
     except Exception:
         c1.metric("最新价（日线收盘）", f"{close.iloc[-1]:.1f}", f"{ret.iloc[-1]:+.2%}", delta_color="inverse")
         quote_ok = False
+        qsrc = None
     c2.metric("累计收益", f"{(1+ret).prod()-1:.1%}")
     c3.metric("最大回撤", f"{qs.stats.max_drawdown(ret):.1%}")
     c4.metric("夏普比率", f"{qs.stats.sharpe(ret):.2f}")
-    src_tag = "🟢 近实时报价(约15分钟延迟)" if quote_ok else "⚠️ 报价接口不可用，回退日线收盘价"
+    if quote_ok:
+        src_tag = "🅰️ Alpaca真实时" if qsrc == "alpaca" else "🟡 yfinance(约15分钟延迟，黄金期货Alpaca不覆盖)"
+    else:
+        src_tag = "⚠️ 报价接口不可用，回退日线收盘价"
     st.caption(f"{src_tag} · 每30秒自动检查一次 · 最后检查 {dt.datetime.now().strftime('%H:%M:%S')}")
 
 

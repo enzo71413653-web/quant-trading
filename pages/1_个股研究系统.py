@@ -87,9 +87,10 @@ with tab1:
         day = returns.iloc[-1] if len(returns) else 0.0
         r1 = st.columns(4)
         try:
-            last, chg = get_quote(symbol)
-            r1[0].metric("最新价（近实时）", f"{last:.2f}", f"{chg:+.2%}", delta_color="inverse",
-                        help="约15分钟延迟的近实时报价，非日线收盘价")
+            last, chg, qsrc = get_quote(symbol)
+            label = "最新价（🅰️ Alpaca真实时）" if qsrc == "alpaca" else "最新价（yfinance≈15分钟延迟）"
+            r1[0].metric(label, f"{last:.2f}", f"{chg:+.2%}", delta_color="inverse",
+                        help="Alpaca：真实时IEX成交价，仅美股。yfinance：约15分钟延迟，覆盖面更广")
         except Exception:
             r1[0].metric("最新价（日线收盘）", f"{close.iloc[-1]:.2f}", f"{day:+.2%}", delta_color="inverse",
                         help="该市场暂无近实时报价接口，回退日线收盘价")
